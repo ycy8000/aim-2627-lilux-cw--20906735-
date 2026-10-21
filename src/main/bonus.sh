@@ -7,6 +7,43 @@ output=${2:?需要输出目录}
 
 action=${3:-start}
 
-# TODO：删除下方提示和 exit 77，再填写你的命令。
-printf '%s\n' 'BONUS 尚未实现' >&2
-exit 77
+source "$input/bonus.env"
+mkdir -p "$output"
+
+case "$action" in
+    start)
+        if ! tmux -L "$TMUX_SOCKET" has-session -t "=$SESSION" 2>/dev/null; then
+            printf -v command 'exec python3 %q --token %q --log %q' \
+                "$WORKER_TOOL" "$TOKEN" "$output/bonus.log"
+            tmux -L "$TMUX_SOCKET" new-session -d -s "$SESSION" "$command"
+        fi
+        ;;
+    stop)
+        if tmux -L "$TMUX_SOCKET" has-session -t "=$SESSION" 2>/dev/null; then
+            pid=$(tmux -L "$TMUX_SOCKET" display-message -p \
+                -t "=$SESSION:" '#{pane_pid}')
+            kill -TERM "$pid"
+            stopped=false
+            for ((attempt = 0; attempt < 40; attempt++)); do
+                state=$(ps -p "$pid" -o stat=) || state=
+                if [[ -z "$state" || "$state" == *Z* ]]; then
+                    stopped=true
+                    break
+                fi
+                sleep 0.05
+            done
+            if [ "$stopped" != true ]; then
+                printf 'Collector did not stop in time\n' >&2
+                exit 1
+            fi
+            # The session usually ends automatically when its only pane exits.
+            if tmux -L "$TMUX_SOCKET" has-session -t "=$SESSION" 2>/dev/null; then
+                tmux -L "$TMUX_SOCKET" kill-session -t "=$SESSION"
+            fi
+        fi
+        ;;
+    *)
+        printf 'Unknown action: %s\n' "$action" >&2
+        exit 2
+        ;;
+esac
